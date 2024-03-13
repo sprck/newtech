@@ -1,13 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Stream logs from AWS to Datadog using Kinesis Firehose and CloudWatch Logs
+Description: Stream logs from an existing AWS CloudWatch Log Group to Datadog using Kinesis Firehose
+
+Parameters:
+  ExistingLogGroupName:
+    Type: String
+    Description: The name of the existing CloudWatch Log Group
+  DatadogApiKey:
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: '/datadog/apiKey'
+  DatadogHost:
+    Type: 'AWS::SSM::Parameter::Value<String>'
+    Default: '/datadog/host'
 
 Resources:
-  CloudWatchLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: /aws/lambda/example-log-group
-      RetentionInDays: 14
-
   KinesisFirehoseDeliveryStream:
     Type: AWS::KinesisFirehose::DeliveryStream
     Properties:
@@ -15,11 +20,17 @@ Resources:
       DeliveryStreamType: DirectPut
       HttpEndpointDestinationConfiguration:
         EndpointConfiguration:
-          Url: !Sub "https://http-intake.logs.datadoghq.com/v1/input/${DatadogApiKey}"
+          Url: !Sub "https://${DatadogHost}/v1/input/${DatadogApiKey}"
           AccessKey: !Ref DatadogApiKey
         BufferingHints:
           IntervalInSeconds: 60
           SizeInMBs: 5
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Ref ExistingLogGroupName
+          LogStreamName: FirehoseDelivery
+        RequestConfiguration:
+          ContentEncoding: "GZIP"
         S3BackupMode: FailedDataOnly
         S3Configuration:
           BucketARN: !Sub "arn:aws:s3:::your-backup-bucket"
@@ -52,9 +63,10 @@ Resources:
                   - !Sub "arn:aws:s3:::your-backup-bucket"
                   - !Sub "arn:aws:s3:::your-backup-bucket/*"
 
-Parameters:
-  DatadogApiKey:
-    Type: AWS::SSM::Parameter::Value<String>
-    Default: /datadog/apiKey
-    Description: Datadog API Key stored in AWS Systems Manager Parameter Store
-
+  CloudWatchLogsSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    Properties:
+      DestinationArn: !GetAtt KinesisFirehoseDeliveryStream.Arn
+      FilterPattern: ""
+      LogGroupName: !Ref ExistingLogGroupName
+      RoleArn: !GetAtt FirehoseDeliveryRole.Arn
