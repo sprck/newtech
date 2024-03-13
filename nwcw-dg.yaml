@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Stream logs from AWS to Datadog using Kinesis Firehose and CloudWatch Logs
+
+Resources:
+  CloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/example-log-group
+      RetentionInDays: 14
+
+  KinesisFirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: aws-to-datadog-stream
+      DeliveryStreamType: DirectPut
+      HttpEndpointDestinationConfiguration:
+        EndpointConfiguration:
+          Url: !Sub "https://${YOUR_DATADOG_HOST}/v1/input/${YOUR_DATADOG_API_KEY}"
+          Name: DatadogEndpoint
+          AccessKey: YOUR_DATADOG_API_KEY
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 5
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Ref CloudWatchLogGroup
+          LogStreamName: FirehoseDelivery
+        RequestConfiguration:
+          ContentEncoding: "GZIP"
+        S3BackupMode: FailedDataOnly
+        S3Configuration:
+          BucketARN: !Sub "arn:aws:s3:::your-backup-bucket"
+          RoleARN: !GetAtt FirehoseDeliveryRole.Arn
+
+  FirehoseDeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FirehoseToDatadogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:AbortMultipartUpload
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                  - s3:PutObject
+                Resource:
+                  - !Sub "arn:aws:s3:::your-backup-bucket"
+                  - !Sub "arn:aws:s3:::your-backup-bucket/*"
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  CloudWatchLogsSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    Properties:
+      DestinationArn: !GetAtt KinesisFirehoseDeliveryStream.Arn
+      FilterPattern: ""
+      LogGroupName: !Ref CloudWatchLogGroup
+      RoleArn: !GetAtt FirehoseDeliveryRole.Arn
